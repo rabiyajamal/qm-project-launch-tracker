@@ -595,6 +595,7 @@ View switcher in toolbar with four modes:
       <div class="nav-item" data-view="people" onclick="switchView('people')"><span class="nav-icon">👥</span> People</div>
       <div class="nav-item" data-view="documents" onclick="switchView('documents')"><span class="nav-icon">📁</span> Documents</div>
       <div class="nav-divider"></div>
+      <div class="nav-item" data-view="team" onclick="switchView('team')"><span class="nav-icon">🌐</span> Team Sync</div>
       <div class="nav-item" data-view="slides" onclick="switchView('slides')"><span class="nav-icon">📽️</span> Slides</div>
       <div class="nav-item" data-view="setup" onclick="switchView('setup')"><span class="nav-icon">⚙️</span> New Project</div>
     </nav>
@@ -720,7 +721,7 @@ function initDemo(){
 function switchView(view){
   state.currentView=view;state.selectMode=false;state.selectedIds=new Set();
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.view===view));
-  const titles={dashboard:'Dashboard',timeline:'Timeline',milestones:'Milestones',activity:'Activity',people:'People & Reporting',documents:'Documents',slides:'Slides',setup:'New Project'};
+  const titles={dashboard:'Dashboard',timeline:'Timeline',milestones:'Milestones',activity:'Activity',people:'People & Reporting',documents:'Documents',team:'Team Sync',slides:'Slides',setup:'New Project'};
   document.getElementById('topbarTitle').textContent=titles[view]||'Dashboard';
   render();
 }
@@ -772,6 +773,7 @@ function render(){
     case'activity':c.innerHTML=renderActivity(proj);break;
     case'people':c.innerHTML=renderPeople(proj);break;
     case'documents':c.innerHTML=renderDocuments(proj);break;
+    case'team':c.innerHTML=renderTeamSync(proj);break;
     case'slides':c.innerHTML=renderSlides(proj);break;
     case'setup':c.innerHTML=renderSetup();break;
     default:c.innerHTML=renderDashboard(proj);
@@ -1915,6 +1917,217 @@ function deleteDocument(docId){
     proj.activity.push({id:uid(),author:'You',text:`removed document <strong>${d.name}</strong>`,ts:Date.now(),field:'document'});
     save();render();toast('Document removed');
   },true);
+}
+
+// ===== TEAM SYNC =====
+const TEAM_SHEET_URL='https://docs.google.com/spreadsheets/d/1xgrisNjB3Upe3ZADsV9YRVFUpLx24BvVdyU1acHHYh0/edit';
+const TEAM_SHEET_ID='1xgrisNjB3Upe3ZADsV9YRVFUpLx24BvVdyU1acHHYh0';
+
+function renderTeamSync(proj){
+  const teamProjects=JSON.parse(localStorage.getItem('plt_team_projects')||'[]');
+  const lastSync=localStorage.getItem('plt_last_sync');
+
+  let h=`<div style="max-width:700px;margin:0 auto;">`;
+
+  // Header
+  h+=`<div class="card" style="padding:20px;margin-bottom:20px;background:linear-gradient(135deg,#667eea15,#764ba215);border-color:#667eea30;">
+    <h2 style="margin:0 0 8px;">🌐 Team Sync</h2>
+    <p style="color:var(--text-secondary);margin:0;font-size:13px;">Share projects with your team through a shared Google Sheet. Everyone on the team can publish and load projects.</p>
+    ${lastSync?`<div style="margin-top:8px;font-size:11px;color:var(--text-secondary);">Last synced: ${new Date(parseInt(lastSync)).toLocaleString()}</div>`:''}
+  </div>`;
+
+  // PUBLISH section
+  h+=`<div class="card" style="padding:20px;margin-bottom:16px;">
+    <h3 style="margin:0 0 12px;">📤 Publish Your Project</h3>
+    <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">Push your current project to the shared team sheet so others can see it.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn btn-primary" onclick="publishToTeam()">📤 Publish "${proj?proj.name:'—'}" to Team</button>
+    </div>
+    <div id="publishStatus" style="margin-top:8px;"></div>
+  </div>`;
+
+  // LOAD section
+  h+=`<div class="card" style="padding:20px;margin-bottom:16px;">
+    <h3 style="margin:0 0 12px;">📥 Load Team Projects</h3>
+    <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">Pull the latest projects shared by your team.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+      <button class="btn btn-secondary" onclick="loadFromTeam()">🔄 Refresh from Team Sheet</button>
+      <a href="${TEAM_SHEET_URL}" target="_blank" class="btn btn-secondary" style="text-decoration:none;">📊 Open Sheet</a>
+    </div>
+    <div id="teamProjectsList">`;
+
+  if(teamProjects.length){
+    teamProjects.forEach((tp,i)=>{
+      const existing=state.projects.find(p=>p.name===tp.name);
+      h+=`<div class="card" style="padding:12px;margin-bottom:8px;display:flex;align-items:center;gap:12px;">
+        <div style="width:40px;height:40px;border-radius:8px;background:var(--accent);display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px;flex-shrink:0;">📋</div>
+        <div style="flex:1;">
+          <div style="font-weight:600;font-size:14px;">${tp.name}</div>
+          <div style="font-size:11px;color:var(--text-secondary);">${tp.milestoneCount||0} milestones · Updated by ${tp.updatedBy||'—'} · ${tp.lastUpdated?new Date(tp.lastUpdated).toLocaleString():'—'}</div>
+        </div>
+        <div style="display:flex;gap:6px;">
+          ${existing?`<span class="badge badge-green" style="font-size:10px;">Loaded</span><button class="btn btn-secondary btn-sm" onclick="updateFromTeam(${i})">🔄 Update</button>`
+            :`<button class="btn btn-primary btn-sm" onclick="importFromTeam(${i})">📥 Import</button>`}
+        </div>
+      </div>`;
+    });
+  } else {
+    h+=`<div style="text-align:center;padding:20px;color:var(--text-secondary);font-size:13px;">
+      <p>No team projects loaded yet.</p>
+      <p>Click <strong>Refresh from Team Sheet</strong> to pull projects, or ask a teammate to <strong>Publish</strong> theirs.</p>
+    </div>`;
+  }
+
+  h+=`</div></div>`;
+
+  // HOW IT WORKS
+  h+=`<div class="card" style="padding:20px;">
+    <h3 style="margin:0 0 12px;">💡 How Team Sync Works</h3>
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:8px 16px;font-size:13px;">
+      <span style="font-size:20px;">1️⃣</span><div><strong>Publish</strong> — Your project data is copied to a shared Google Sheet that your whole team can access.</div>
+      <span style="font-size:20px;">2️⃣</span><div><strong>Load</strong> — Team members click Refresh to pull all published projects from the sheet.</div>
+      <span style="font-size:20px;">3️⃣</span><div><strong>Update</strong> — Re-publish anytime to push your latest changes. Others click Update to pull them.</div>
+    </div>
+    <div style="margin-top:12px;padding:10px;background:var(--bg);border-radius:8px;font-size:12px;color:var(--text-secondary);">
+      <strong>📊 Team Sheet:</strong> <a href="${TEAM_SHEET_URL}" target="_blank" style="color:var(--accent);">Open in Google Sheets</a>
+      <br>Anyone at squareup.com can read and write to this sheet.
+    </div>
+  </div>`;
+
+  h+=`</div>`;
+  return h;
+}
+
+function publishToTeam(){
+  const proj=getProject();if(!proj){toast('No project to publish');return;}
+  const statusEl=document.getElementById('publishStatus');
+  statusEl.innerHTML=`<div style="font-size:13px;color:var(--accent);">⏳ Preparing project data...</div>`;
+
+  // Create compact JSON for the sheet
+  const data={
+    ...proj,
+    activity:(proj.activity||[]).slice(-20) // Keep last 20 activity entries to save space
+  };
+  const json=JSON.stringify(data);
+
+  // Copy to clipboard with instructions
+  const now=new Date().toISOString();
+  const rowData=`${proj.id}\t${proj.name}\t${json}\t${now}\tYou`;
+
+  navigator.clipboard.writeText(json).then(()=>{
+    statusEl.innerHTML=`<div class="card" style="padding:14px;border-left:4px solid var(--success);margin-top:8px;">
+      <div style="font-size:14px;font-weight:600;color:var(--success);margin-bottom:8px;">✅ Project JSON copied!</div>
+      <div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">Now paste it into the team Google Sheet:</div>
+      <ol style="font-size:13px;padding-left:20px;margin:0 0 12px;">
+        <li>Click the button below to open the sheet</li>
+        <li>Find your project row (by name) or go to the next empty row</li>
+        <li>Paste the JSON into the <strong>ProjectJSON</strong> column (column C)</li>
+        <li>Update columns A (ID), B (Name), D (Date), E (Your name)</li>
+      </ol>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <a href="${TEAM_SHEET_URL}" target="_blank" class="btn btn-primary btn-sm" style="text-decoration:none;">📊 Open Team Sheet</a>
+        <button class="btn btn-secondary btn-sm" onclick="copyPublishRow()">📋 Copy Full Row</button>
+      </div>
+    </div>`;
+
+    // Store the row data for the "Copy Full Row" button
+    window._publishRowData={id:proj.id,name:proj.name,json,date:now};
+    toast('Project JSON copied!','success');
+  }).catch(()=>{
+    statusEl.innerHTML=`<div class="card" style="padding:14px;border-left:4px solid var(--warning);">
+      <div style="font-size:13px;">Couldn't copy automatically. Please copy the JSON below and paste it into the <a href="${TEAM_SHEET_URL}" target="_blank">team sheet</a>.</div>
+      <textarea readonly style="width:100%;height:100px;font-size:10px;font-family:monospace;margin-top:8px;" onclick="this.select()">${json.replace(/</g,'&lt;')}</textarea>
+    </div>`;
+  });
+}
+
+function copyPublishRow(){
+  const d=window._publishRowData;
+  if(!d)return;
+  // Tab-separated for pasting into sheets
+  const row=`${d.id}\t${d.name}\t${d.json}\t${d.date}\tYou`;
+  navigator.clipboard.writeText(row).then(()=>toast('Full row copied — paste into the sheet!','success'));
+}
+
+function loadFromTeam(){
+  const listEl=document.getElementById('teamProjectsList');
+  if(listEl)listEl.innerHTML=`<div style="text-align:center;padding:20px;"><span style="font-size:13px;color:var(--accent);">⏳ To load team projects:</span></div>`;
+
+  // Open a prompt to paste data from the sheet
+  let h=`<div class="modal-header"><h2>📥 Load from Team Sheet</h2><button class="modal-close" onclick="closeModal()">✕</button></div>`;
+  h+=`<div class="modal-body">
+    <p style="color:var(--text-secondary);margin-bottom:12px;">Copy the project data from the <a href="${TEAM_SHEET_URL}" target="_blank">team Google Sheet</a> and paste it below.</p>
+    <div style="padding:12px;background:var(--bg);border-radius:8px;margin-bottom:12px;font-size:12px;">
+      <strong>Quick steps:</strong>
+      <ol style="margin:4px 0 0;padding-left:16px;">
+        <li>Open the <a href="${TEAM_SHEET_URL}" target="_blank">team sheet</a></li>
+        <li>Select the <strong>ProjectJSON</strong> cell (column C) for the project you want</li>
+        <li>Copy it (Cmd+C)</li>
+        <li>Paste below</li>
+      </ol>
+    </div>
+    <div class="field">
+      <label>Paste project JSON from the sheet</label>
+      <textarea id="teamSyncPaste" rows="6" placeholder="Paste the JSON from column C of the team sheet..." style="font-size:12px;font-family:monospace;"></textarea>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:12px;">
+      <button class="btn btn-primary btn-lg" style="flex:1;" onclick="processTeamSync()">📥 Load Project</button>
+      <button class="btn btn-secondary btn-lg" onclick="closeModal()">Cancel</button>
+    </div>
+  </div>`;
+  document.getElementById('modalPanel').innerHTML=h;document.getElementById('modalOverlay').classList.add('open');
+}
+
+function processTeamSync(){
+  const raw=(document.getElementById('teamSyncPaste')?.value||'').trim();
+  if(!raw){toast('Paste project data first');return;}
+
+  try{
+    // Try parsing as JSON directly
+    let proj;
+    try{proj=JSON.parse(raw);}catch(e){
+      // Maybe it's tab-separated row data
+      const parts=raw.split('\t');
+      if(parts.length>=3){
+        try{proj=JSON.parse(parts[2]);}catch(e2){throw new Error('Could not parse project data');}
+      } else {throw e;}
+    }
+
+    if(!proj||!proj.name){throw new Error('Invalid project data — missing name');}
+
+    // Give it a fresh ID
+    proj.id=uid();
+
+    // Check for existing
+    const existing=state.projects.find(p=>p.name===proj.name);
+    if(existing){
+      // Update existing
+      const keepId=existing.id;
+      Object.assign(existing,proj);
+      existing.id=keepId;
+      state.currentProjectId=keepId;
+      save();closeModal();render();
+      toast(`Updated: ${proj.name}`,'success');
+    } else {
+      // Add new
+      state.projects.push(proj);
+      state.currentProjectId=proj.id;
+      save();closeModal();render();
+      toast(`Loaded: ${proj.name}`,'success');
+    }
+
+    // Save to team projects list
+    const teamProjects=JSON.parse(localStorage.getItem('plt_team_projects')||'[]');
+    const tpIdx=teamProjects.findIndex(tp=>tp.name===proj.name);
+    const tp={name:proj.name,milestoneCount:(proj.milestones||[]).length,updatedBy:'Team',lastUpdated:Date.now()};
+    if(tpIdx>=0)teamProjects[tpIdx]=tp;else teamProjects.push(tp);
+    localStorage.setItem('plt_team_projects',JSON.stringify(teamProjects));
+    localStorage.setItem('plt_last_sync',Date.now().toString());
+
+  }catch(err){
+    toast('Error: '+err.message);
+    console.error('Team sync error:',err);
+  }
 }
 
 // ===== MILESTONE DETAIL =====

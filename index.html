@@ -657,7 +657,10 @@ function load(){
   if(!state.projects)state.projects=[];
   // Try loading from URL hash first
   const loadedFromUrl=loadFromUrlHash();
-  if(!state.projects.length&&!loadedFromUrl)initDemo();
+  // No demo project — start clean. Show setup view if no projects.
+  if(!state.projects.length&&!loadedFromUrl){
+    state.currentView='setup';
+  }
   if(!state.currentProjectId&&state.projects.length)state.currentProjectId=state.projects[0].id;
   if(!state.msView)state.msView='cards';
 }
@@ -774,7 +777,7 @@ function render(){
     default:c.innerHTML=renderDashboard(proj);
   }
 }
-function renderEmpty(){return`<div class="empty-state"><div class="empty-icon">🚀</div><h3>No Project Selected</h3><p>Create a new project to get started.</p><button class="btn btn-primary btn-lg" onclick="switchView('setup')">Create Project</button></div>`;}
+function renderEmpty(){return`<div class="empty-state"><div class="empty-icon">🚀</div><h3>Welcome to Project Launch Tracker</h3><p style="max-width:400px;margin:0 auto 20px;">Create a new project with AI, import from Excel or Google Sheets, or paste a project JSON.</p><div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;"><button class="btn btn-primary btn-lg" onclick="switchView('setup')">✨ Create Project</button></div></div>`;}
 
 // ===== INLINE EDITING =====
 function inlineEditTitle(e,id){

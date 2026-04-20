@@ -2895,39 +2895,69 @@ function exportProject(){
 function generateShareableLink(){
   const proj=getProject();if(!proj){toast('No project to share');return;}
   try{
-    const data=JSON.stringify(proj);
-    // Use built-in compression via encodeURIComponent + base64
-    const encoded=btoa(unescape(encodeURIComponent(data)));
-    const baseUrl=window.location.origin+window.location.pathname;
-    const shareUrl=baseUrl+'#project='+encoded;
+    // Create compact version (strip activity to keep URL shorter)
+    const compact={...proj,activity:(proj.activity||[]).slice(-10)};
+    const fullData=JSON.stringify(proj);
+    const compactData=JSON.stringify(compact);
 
-    // Check if URL is too long (browsers typically support ~2MB in hash)
-    if(shareUrl.length>2000000){
-      toast('Project too large for URL sharing. Use JSON export instead.');
-      return;
+    let encoded,isCompact=false;
+    try{
+      encoded=btoa(unescape(encodeURIComponent(compactData)));
+      isCompact=true;
+    }catch(e){
+      // If even compact fails, try with just milestones
+      const minimal={id:proj.id,name:proj.name,description:proj.description,targetDate:proj.targetDate,createdAt:proj.createdAt,milestones:proj.milestones,documents:proj.documents||[],activity:[]};
+      encoded=btoa(unescape(encodeURIComponent(JSON.stringify(minimal))));
+      isCompact=true;
     }
 
-    // Show share dialog
+    const baseUrl=window.location.origin+window.location.pathname;
+    const shareUrl=baseUrl+'#project='+encoded;
+    const fullJson=fullData;
+    const tooLong=shareUrl.length>50000;// some browsers/apps truncate long URLs
+
     let h=`<div class="modal-header"><h2>🔗 Share Project</h2><button class="modal-close" onclick="closeModal()">✕</button></div>`;
     h+=`<div class="modal-body">
-      <p style="color:var(--text-secondary);margin-bottom:16px;">Anyone who opens this link will see your <strong>${proj.name}</strong> project pre-loaded with all milestones, documents, and activity.</p>
-      <div class="field"><label>Shareable Link</label>
-        <div style="display:flex;gap:8px;">
-          <input id="shareUrl" value="${shareUrl}" readonly style="font-size:12px;font-family:monospace;flex:1;" onclick="this.select()">
-          <button class="btn btn-primary btn-sm" onclick="copyShareLink()">📋 Copy</button>
+      <p style="color:var(--text-secondary);margin-bottom:16px;">Share your <strong>${proj.name}</strong> project (${proj.milestones.length} milestones).</p>
+
+      <div style="display:flex;flex-direction:column;gap:16px;">
+
+        <div class="card" style="padding:16px;${tooLong?'opacity:0.6;':'border-color:var(--accent);'}">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <strong>🔗 Option 1: Shareable Link</strong>
+            ${tooLong?'<span class="badge badge-yellow" style="font-size:10px;">⚠️ Large — may get truncated</span>':'<span class="badge badge-green" style="font-size:10px;">✅ Recommended</span>'}
+          </div>
+          <div style="display:flex;gap:8px;">
+            <input id="shareUrl" value="${shareUrl}" readonly style="font-size:11px;font-family:monospace;flex:1;" onclick="this.select()">
+            <button class="btn btn-primary btn-sm" onclick="copyShareLink()">📋 Copy</button>
+          </div>
+          <div style="margin-top:4px;font-size:11px;color:var(--text-secondary);">
+            Link size: ${(shareUrl.length/1024).toFixed(1)} KB
+            ${isCompact?' (compact — last 10 activity entries included)':''}
+          </div>
         </div>
-        <div style="margin-top:6px;font-size:11px;color:var(--text-secondary);">
-          📊 ${proj.milestones.length} milestones · 📁 ${(proj.documents||[]).length} documents · 📝 ${(proj.activity||[]).length} activity entries
-          <br>🔗 Link size: ${(shareUrl.length/1024).toFixed(1)} KB
+
+        <div class="card" style="padding:16px;${tooLong?'border-color:var(--accent);':''}">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <strong>📋 Option 2: Copy JSON</strong>
+            ${tooLong?'<span class="badge badge-green" style="font-size:10px;">✅ Best for large projects</span>':''}
+          </div>
+          <p style="font-size:12px;color:var(--text-secondary);margin:0 0 8px;">Copy the JSON and have the recipient paste it via <strong>New Project → Import → Paste Data</strong></p>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-secondary btn-sm" onclick="copyShareJson()">📋 Copy Project JSON</button>
+            <span id="jsonCopyStatus" style="font-size:12px;color:var(--success);display:none;">✅ Copied!</span>
+          </div>
+          <textarea id="shareJson" style="display:none;">${fullJson.replace(/</g,'&lt;').replace(/"/g,'&quot;')}</textarea>
         </div>
+
       </div>
+
       <div style="margin-top:16px;padding:12px;background:var(--bg);border-radius:8px;font-size:12px;">
-        <strong>How it works:</strong>
+        <strong>How sharing works:</strong>
         <ul style="margin:4px 0 0;padding-left:16px;color:var(--text-secondary);">
-          <li>Your project data is encoded in the URL</li>
-          <li>Recipients see a read-only snapshot they can then edit locally</li>
-          <li>Changes they make won't affect your version</li>
-          <li>No server or login required</li>
+          <li><strong>Link:</strong> Project data is encoded in the URL — just open and it loads</li>
+          <li><strong>JSON:</strong> Recipient pastes into Import — works for any size project</li>
+          <li>Recipients get their own copy — changes don't affect yours</li>
         </ul>
       </div>
     </div>`;
@@ -2935,6 +2965,21 @@ function generateShareableLink(){
   }catch(err){
     console.error('Share error:',err);
     toast('Error generating link: '+err.message);
+  }
+}
+
+function copyShareJson(){
+  const el=document.getElementById('shareJson');
+  if(el){
+    const text=el.value.replace(/&lt;/g,'<').replace(/&quot;/g,'"');
+    navigator.clipboard.writeText(text).then(()=>{
+      const status=document.getElementById('jsonCopyStatus');
+      if(status){status.style.display='inline';setTimeout(()=>status.style.display='none',3000);}
+      toast('JSON copied!','success');
+    }).catch(()=>{
+      el.style.display='block';el.select();document.execCommand('copy');
+      toast('JSON copied!','success');
+    });
   }
 }
 

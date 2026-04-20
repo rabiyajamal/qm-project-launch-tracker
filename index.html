@@ -2869,7 +2869,24 @@ function buildSmartMilestones(a){
 }
 function confirmGeneratedPlan(){if(!window._tempPlan)return;state.projects.push(window._tempPlan);state.currentProjectId=window._tempPlan.id;save();switchView('dashboard');toast('Created!','success');window._tempPlan=null;}
 
-function exportProject(){const p=getProject();if(!p)return;const b=new Blob([JSON.stringify(p,null,2)],{type:'application/json'}),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download=p.name.replace(/\s+/g,'_')+'.json';a.click();URL.revokeObjectURL(u);toast('Exported');}
+function exportProject(){
+  const p=getProject();if(!p)return;
+  const json=JSON.stringify(p,null,2);
+  // Try download
+  const b=new Blob([json],{type:'application/json'}),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download=p.name.replace(/\s+/g,'_')+'.json';a.click();URL.revokeObjectURL(u);
+  // Also show in a copyable dialog as fallback
+  let h=`<div class="modal-header"><h2>📤 Export Project</h2><button class="modal-close" onclick="closeModal()">✕</button></div>`;
+  h+=`<div class="modal-body">
+    <p style="color:var(--text-secondary);margin-bottom:12px;">If the download didn't work, copy the JSON below:</p>
+    <textarea id="exportJson" readonly style="width:100%;height:300px;font-size:11px;font-family:monospace;border:1px solid var(--border);border-radius:8px;padding:12px;" onclick="this.select()">${json.replace(/</g,'&lt;')}</textarea>
+    <div style="margin-top:12px;display:flex;gap:8px;">
+      <button class="btn btn-primary btn-sm" onclick="document.getElementById('exportJson').select();document.execCommand('copy');toast('Copied!','success')">📋 Copy to Clipboard</button>
+      <button class="btn btn-secondary btn-sm" onclick="closeModal()">Close</button>
+    </div>
+  </div>`;
+  document.getElementById('modalPanel').innerHTML=h;document.getElementById('modalOverlay').classList.add('open');
+  toast('Exported');
+}
 
 // ===== SHAREABLE LINK =====
 function generateShareableLink(){
@@ -2932,22 +2949,37 @@ function loadFromUrlHash(){
     if(!hash||!hash.includes('project='))return false;
     const encoded=hash.split('project=')[1];
     if(!encoded)return false;
+
+    // Always clear the hash immediately so it never reloads on refresh
+    history.replaceState(null,'',window.location.pathname+window.location.search);
+
     const json=decodeURIComponent(escape(atob(encoded)));
     const proj=JSON.parse(json);
     if(!proj||!proj.name)return false;
-    // Give it a fresh ID so it doesn't conflict
-    proj.id=uid();
-    // Check if we already loaded this (by name) to avoid duplicates on refresh
-    const existing=state.projects.find(p=>p.name===proj.name&&p.milestones?.length===proj.milestones?.length);
+
+    // Check if we already have this project loaded (user already visited this link before)
+    // Use a stored flag so we don't re-add after deletion
+    const hashKey='plt_loaded_'+btoa(proj.name).slice(0,20);
+    if(localStorage.getItem(hashKey)){
+      // Already loaded this shared link before — respect whatever user did (including deleting)
+      return false;
+    }
+
+    // Mark that we've loaded this shared project
+    localStorage.setItem(hashKey,'1');
+
+    // Check for existing by name to avoid duplicates
+    const existing=state.projects.find(p=>p.name===proj.name);
     if(existing){
       state.currentProjectId=existing.id;
       return true;
     }
+
+    // Add as new project
+    proj.id=uid();
     state.projects.push(proj);
     state.currentProjectId=proj.id;
     save();
-    // Clean the hash so refreshing doesn't re-add
-    history.replaceState(null,'',window.location.pathname+window.location.search);
     toast(`Loaded shared project: ${proj.name}`,'success');
     return true;
   }catch(err){
